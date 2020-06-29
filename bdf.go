@@ -27,6 +27,8 @@ type Font struct {
 	DPI        [2]int
 	Ascent     int
 	Descent    int
+	CapHeight  int
+	XHeight    int
 	Characters []Character
 	Encoding   map[rune]*Character
 }
@@ -49,7 +51,6 @@ func Parse(data []byte) (*Font, error) {
 		Encoding: make(map[rune]*Character),
 	}
 	var err error
-
 	char := -1
 	row := -1
 	inBitmap := false
@@ -84,6 +85,16 @@ func Parse(data []byte) (*Font, error) {
 				}
 			case "FONT_DESCENT":
 				f.Descent, err = strconv.Atoi(components[1])
+				if err != nil {
+					return nil, err
+				}
+			case "CAP_HEIGHT":
+				f.CapHeight, err = strconv.Atoi(components[1])
+				if err != nil {
+					return nil, err
+				}
+			case "X_HEIGHT":
+				f.XHeight, err = strconv.Atoi(components[1])
 				if err != nil {
 					return nil, err
 				}
@@ -180,8 +191,14 @@ func Parse(data []byte) (*Font, error) {
 func (f *Face) Close() error { return nil }
 
 func (f *Face) Metrics() font.Metrics {
-	return font.Metrics{}
+	return font.Metrics{
+		Ascent:    fixed.I(f.Font.Ascent),
+		Descent:   fixed.I(f.Font.Descent),
+		CapHeight: fixed.I(f.Font.CapHeight),
+		XHeight:   fixed.I(f.Font.XHeight),
+	}
 }
+
 func (f *Face) Kern(r0, r1 rune) fixed.Int26_6 {
 	return 0
 }
