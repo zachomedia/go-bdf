@@ -196,6 +196,7 @@ func (f *Face) Metrics() font.Metrics {
 		Descent:   fixed.I(f.Font.Descent),
 		CapHeight: fixed.I(f.Font.CapHeight),
 		XHeight:   fixed.I(f.Font.XHeight),
+		Height:    fixed.I(f.Font.Ascent + f.Font.Descent),
 	}
 }
 
