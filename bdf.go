@@ -22,17 +22,18 @@ type Character struct {
 }
 
 type Font struct {
-	Name       string
-	Size       int
-	PixelSize  int
-	DPI        [2]int
-	Ascent     int
-	Descent    int
-	CapHeight  int
-	XHeight    int
-	Characters []Character
-	CharMap    map[rune]*Character
-	Encoding   string
+	Name        string
+	Size        int
+	PixelSize   int
+	DPI         [2]int
+	Ascent      int
+	Descent     int
+	CapHeight   int
+	XHeight     int
+	Characters  []Character
+	CharMap     map[rune]*Character
+	Encoding    string
+	DefaultChar rune
 }
 
 type Face struct {
@@ -45,11 +46,23 @@ func (f *Font) NewFace() font.Face {
 	}
 }
 
+func (f *Font) lookup(r rune) *Character {
+	c, ok := f.CharMap[r]
+	if !ok {
+		c, ok = f.CharMap[f.DefaultChar]
+		if !ok {
+			return nil
+		}
+	}
+	return c
+}
+
 func parseGlobalsAndProperties(s *bufio.Scanner, f *Font) error {
 	var err error
 
 	var registry string
 	var encoding string
+	var defaultChar int
 
 scan:
 	for s.Scan() {
@@ -98,7 +111,11 @@ scan:
 			if err != nil {
 				return err
 			}
-
+		case "DEFAULT_CHAR":
+			defaultChar, err = strconv.Atoi(components[1])
+			if err != nil {
+				return err
+			}
 		case "CHARS":
 			count, err := strconv.Atoi(components[1])
 			if err != nil {
@@ -106,13 +123,20 @@ scan:
 			}
 			f.Characters = make([]Character, count)
 			break scan
-
 		}
 	}
 
 	f.Encoding = registry + "-" + encoding
+	f.DefaultChar = charToRune(f.Encoding, defaultChar)
 
 	return nil
+}
+
+func charToRune(encoding string, char int) rune {
+	if charMap := findCharmap(encoding); charMap != nil {
+		return charMap.DecodeByte(byte(char))
+	}
+	return rune(char)
 }
 
 func findCharmap(requested string) *charmap.Charmap {
@@ -134,7 +158,8 @@ func Parse(data []byte) (*Font, error) {
 	s := bufio.NewScanner(r)
 
 	f := Font{
-		CharMap: make(map[rune]*Character),
+		CharMap:     make(map[rune]*Character),
+		DefaultChar: 32,
 	}
 
 	var err error
@@ -262,8 +287,8 @@ func (f *Face) Kern(_, _ rune) fixed.Int26_6 {
 }
 
 func (f *Face) Glyph(dot fixed.Point26_6, r rune) (dr image.Rectangle, mask image.Image, maskp image.Point, advance fixed.Int26_6, ok bool) {
-	c, ok := f.Font.CharMap[r]
-	if !ok {
+	c := f.Font.lookup(r)
+	if c == nil {
 		return image.Rectangle{}, nil, image.Point{}, 0, false
 	}
 
@@ -286,8 +311,8 @@ func (f *Face) Glyph(dot fixed.Point26_6, r rune) (dr image.Rectangle, mask imag
 }
 
 func (f *Face) GlyphBounds(r rune) (bounds fixed.Rectangle26_6, advance fixed.Int26_6, ok bool) {
-	c, ok := f.Font.CharMap[r]
-	if !ok {
+	c := f.Font.lookup(r)
+	if c == nil {
 		return fixed.R(0, -f.Font.Ascent, 0, +f.Font.Descent), 0, false
 	}
 
@@ -295,8 +320,8 @@ func (f *Face) GlyphBounds(r rune) (bounds fixed.Rectangle26_6, advance fixed.In
 }
 
 func (f *Face) GlyphAdvance(r rune) (advance fixed.Int26_6, ok bool) {
-	c, ok := f.Font.CharMap[r]
-	if !ok {
+	c := f.Font.lookup(r)
+	if c == nil {
 		return 0, false
 	}
 	return fixed.I(c.Advance[0]), true
