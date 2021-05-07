@@ -294,7 +294,7 @@ func (f *Face) Glyph(dot fixed.Point26_6, r rune) (dr image.Rectangle, mask imag
 
 	mask = c.Alpha
 
-	x := int(dot.X)>>6 - c.LowerPoint[0]
+	x := int(dot.X)>>6 + c.LowerPoint[0]
 	y := int(dot.Y)>>6 - c.LowerPoint[1]
 	dr = image.Rectangle{
 		Min: image.Point{
@@ -316,7 +316,7 @@ func (f *Face) GlyphBounds(r rune) (bounds fixed.Rectangle26_6, advance fixed.In
 		return fixed.R(0, -f.Font.Ascent, 0, +f.Font.Descent), 0, false
 	}
 
-	return fixed.R(0, -f.Font.Ascent, c.Alpha.Rect.Max.X, +f.Font.Descent), fixed.I(c.Advance[0]), true
+	return fixed.R(c.LowerPoint[0], -f.Font.Ascent, c.LowerPoint[0]+c.Alpha.Rect.Dx(), f.Font.Descent), fixed.I(c.Advance[0]), true
 }
 
 func (f *Face) GlyphAdvance(r rune) (advance fixed.Int26_6, ok bool) {
