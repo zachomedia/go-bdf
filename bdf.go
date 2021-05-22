@@ -10,6 +10,7 @@ import (
 
 	"golang.org/x/image/font"
 	"golang.org/x/image/math/fixed"
+	"golang.org/x/text/encoding/charmap"
 )
 
 type Character struct {
@@ -21,16 +22,18 @@ type Character struct {
 }
 
 type Font struct {
-	Name       string
-	Size       int
-	PixelSize  int
-	DPI        [2]int
-	Ascent     int
-	Descent    int
-	CapHeight  int
-	XHeight    int
-	Characters []Character
-	Encoding   map[rune]*Character
+	Name        string
+	Size        int
+	PixelSize   int
+	DPI         [2]int
+	Ascent      int
+	Descent     int
+	CapHeight   int
+	XHeight     int
+	Characters  []Character
+	CharMap     map[rune]*Character
+	Encoding    string
+	DefaultChar rune
 }
 
 type Face struct {
@@ -43,14 +46,131 @@ func (f *Font) NewFace() font.Face {
 	}
 }
 
+func (f *Font) lookup(r rune) *Character {
+	c, ok := f.CharMap[r]
+	if !ok {
+		c, ok = f.CharMap[f.DefaultChar]
+		if !ok {
+			return nil
+		}
+	}
+	return c
+}
+
+func parseGlobalsAndProperties(s *bufio.Scanner, f *Font) error {
+	var err error
+
+	var registry string
+	var encoding string
+	var defaultChar int
+
+scan:
+	for s.Scan() {
+		components := strings.Split(s.Text(), " ")
+		switch components[0] {
+		case "FONT":
+			f.Name = components[1]
+		case "SIZE":
+			f.Size, err = strconv.Atoi(components[1])
+			if err != nil {
+				return err
+			}
+
+			f.DPI[0], err = strconv.Atoi(components[2])
+			if err != nil {
+				return err
+			}
+
+			f.DPI[1], err = strconv.Atoi(components[3])
+			if err != nil {
+				return err
+			}
+		case "CHARSET_REGISTRY":
+			registry = components[1]
+		case "CHARSET_ENCODING":
+			encoding = components[1]
+		case "PIXEL_SIZE":
+			f.PixelSize, err = strconv.Atoi(components[1])
+		case "FONT_ASCENT":
+			f.Ascent, err = strconv.Atoi(components[1])
+			if err != nil {
+				return err
+			}
+		case "FONT_DESCENT":
+			f.Descent, err = strconv.Atoi(components[1])
+			if err != nil {
+				return err
+			}
+		case "CAP_HEIGHT":
+			f.CapHeight, err = strconv.Atoi(components[1])
+			if err != nil {
+				return err
+			}
+		case "X_HEIGHT":
+			f.XHeight, err = strconv.Atoi(components[1])
+			if err != nil {
+				return err
+			}
+		case "DEFAULT_CHAR":
+			defaultChar, err = strconv.Atoi(components[1])
+			if err != nil {
+				return err
+			}
+		case "CHARS":
+			count, err := strconv.Atoi(components[1])
+			if err != nil {
+				return err
+			}
+			f.Characters = make([]Character, count)
+			break scan
+		}
+	}
+
+	f.Encoding = registry + "-" + encoding
+	f.DefaultChar = charToRune(f.Encoding, defaultChar)
+
+	return nil
+}
+
+func charToRune(encoding string, char int) rune {
+	if charMap := findCharmap(encoding); charMap != nil {
+		return charMap.DecodeByte(byte(char))
+	}
+	return rune(char)
+}
+
+func findCharmap(requested string) *charmap.Charmap {
+	trimmed := strings.TrimSpace(strings.ToLower(requested))
+
+	knownMaps := map[string]*charmap.Charmap{
+		"iso8859-1":  charmap.ISO8859_1,
+		"iso8859-2":  charmap.ISO8859_2,
+		"iso8859-9":  charmap.ISO8859_9,
+		"iso8859-15": charmap.ISO8859_15,
+	}
+
+	charMap := knownMaps[trimmed]
+	return charMap
+}
+
 func Parse(data []byte) (*Font, error) {
 	r := bytes.NewReader(data)
 	s := bufio.NewScanner(r)
 
 	f := Font{
-		Encoding: make(map[rune]*Character),
+		CharMap:     make(map[rune]*Character),
+		DefaultChar: 32,
 	}
+
 	var err error
+
+	err = parseGlobalsAndProperties(s, &f)
+	if err != nil {
+		return nil, err
+	}
+
+	charMap := findCharmap(f.Encoding)
+
 	char := -1
 	row := -1
 	inBitmap := false
@@ -59,52 +179,7 @@ func Parse(data []byte) (*Font, error) {
 
 		if !inBitmap {
 			switch components[0] {
-			case "FONT":
-				f.Name = components[1]
-			case "SIZE":
-				f.Size, err = strconv.Atoi(components[1])
-				if err != nil {
-					return nil, err
-				}
 
-				f.DPI[0], err = strconv.Atoi(components[2])
-				if err != nil {
-					return nil, err
-				}
-
-				f.DPI[1], err = strconv.Atoi(components[3])
-				if err != nil {
-					return nil, err
-				}
-			case "PIXEL_SIZE":
-				f.PixelSize, err = strconv.Atoi(components[1])
-			case "FONT_ASCENT":
-				f.Ascent, err = strconv.Atoi(components[1])
-				if err != nil {
-					return nil, err
-				}
-			case "FONT_DESCENT":
-				f.Descent, err = strconv.Atoi(components[1])
-				if err != nil {
-					return nil, err
-				}
-			case "CAP_HEIGHT":
-				f.CapHeight, err = strconv.Atoi(components[1])
-				if err != nil {
-					return nil, err
-				}
-			case "X_HEIGHT":
-				f.XHeight, err = strconv.Atoi(components[1])
-				if err != nil {
-					return nil, err
-				}
-			case "CHARS":
-				count, err := strconv.Atoi(components[1])
-				if err != nil {
-					return nil, err
-				}
-
-				f.Characters = make([]Character, count)
 			case "STARTCHAR":
 				char++
 				f.Characters[char].Name = components[1]
@@ -114,8 +189,14 @@ func Parse(data []byte) (*Font, error) {
 					return nil, err
 				}
 
-				f.Characters[char].Encoding = rune(code)
-				f.Encoding[rune(code)] = &f.Characters[char]
+				var r rune
+				if charMap != nil {
+					r = charMap.DecodeByte(byte(code))
+				} else {
+					r = rune(code)
+				}
+				f.Characters[char].Encoding = r
+				f.CharMap[r] = &f.Characters[char]
 			case "DWIDTH":
 				f.Characters[char].Advance[0], err = strconv.Atoi(components[1])
 				if err != nil {
@@ -188,6 +269,7 @@ func Parse(data []byte) (*Font, error) {
 
 	return &f, nil
 }
+
 func (f *Face) Close() error { return nil }
 
 func (f *Face) Metrics() font.Metrics {
@@ -200,19 +282,19 @@ func (f *Face) Metrics() font.Metrics {
 	}
 }
 
-func (f *Face) Kern(r0, r1 rune) fixed.Int26_6 {
+func (f *Face) Kern(_, _ rune) fixed.Int26_6 {
 	return 0
 }
 
 func (f *Face) Glyph(dot fixed.Point26_6, r rune) (dr image.Rectangle, mask image.Image, maskp image.Point, advance fixed.Int26_6, ok bool) {
-	c, ok := f.Font.Encoding[r]
-	if !ok {
+	c := f.Font.lookup(r)
+	if c == nil {
 		return image.Rectangle{}, nil, image.Point{}, 0, false
 	}
 
 	mask = c.Alpha
 
-	x := int(dot.X)>>6 - c.LowerPoint[0]
+	x := int(dot.X)>>6 + c.LowerPoint[0]
 	y := int(dot.Y)>>6 - c.LowerPoint[1]
 	dr = image.Rectangle{
 		Min: image.Point{
@@ -229,17 +311,17 @@ func (f *Face) Glyph(dot fixed.Point26_6, r rune) (dr image.Rectangle, mask imag
 }
 
 func (f *Face) GlyphBounds(r rune) (bounds fixed.Rectangle26_6, advance fixed.Int26_6, ok bool) {
-	c, ok := f.Font.Encoding[r]
-	if !ok {
+	c := f.Font.lookup(r)
+	if c == nil {
 		return fixed.R(0, -f.Font.Ascent, 0, +f.Font.Descent), 0, false
 	}
 
-	return fixed.R(0, -f.Font.Ascent, c.Alpha.Rect.Max.X, +f.Font.Descent), fixed.I(c.Advance[0]), true
+	return fixed.R(c.LowerPoint[0], -f.Font.Ascent, c.LowerPoint[0]+c.Alpha.Rect.Dx(), f.Font.Descent), fixed.I(c.Advance[0]), true
 }
 
 func (f *Face) GlyphAdvance(r rune) (advance fixed.Int26_6, ok bool) {
-	c, ok := f.Font.Encoding[r]
-	if !ok {
+	c := f.Font.lookup(r)
+	if c == nil {
 		return 0, false
 	}
 	return fixed.I(c.Advance[0]), true
