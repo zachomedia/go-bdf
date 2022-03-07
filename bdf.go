@@ -26,6 +26,7 @@ type Font struct {
 	Size        int
 	PixelSize   int
 	DPI         [2]int
+	BPP         int
 	Ascent      int
 	Descent     int
 	CapHeight   int
@@ -84,6 +85,13 @@ scan:
 			f.DPI[1], err = strconv.Atoi(components[3])
 			if err != nil {
 				return err
+			}
+
+			if len(components) > 4 {
+				f.BPP, err = strconv.Atoi(components[4])
+				if err != nil {
+					return err
+				}
 			}
 		case "CHARSET_REGISTRY":
 			registry = components[1]
@@ -153,6 +161,10 @@ func findCharmap(requested string) *charmap.Charmap {
 	return charMap
 }
 
+func bitAt(xs []byte, i int) byte {
+	return (xs[i>>3] >> (7 - (i % 8))) & 1
+}
+
 func Parse(data []byte) (*Font, error) {
 	r := bytes.NewReader(data)
 	s := bufio.NewScanner(r)
@@ -160,6 +172,7 @@ func Parse(data []byte) (*Font, error) {
 	f := Font{
 		CharMap:     make(map[rune]*Character),
 		DefaultChar: 32,
+		BPP:         1,
 	}
 
 	var err error
@@ -259,10 +272,11 @@ func Parse(data []byte) (*Font, error) {
 
 			for i := 0; i < f.Characters[char].Alpha.Stride; i++ {
 				val := byte(0x00)
-				if b[i/8]&(1<<uint(7-i%8)) != 0 {
-					val = 0xff
+				for j := 0; j < f.BPP; j++ {
+					val <<= 1
+					val |= bitAt(b, i*f.BPP+j)
 				}
-				f.Characters[char].Alpha.Pix[row*f.Characters[char].Alpha.Stride+i] = val
+				f.Characters[char].Alpha.Pix[row*f.Characters[char].Alpha.Stride+i] = byte(uint32(val) * 0xff / ((1 << f.BPP) - 1))
 			}
 		}
 	}
